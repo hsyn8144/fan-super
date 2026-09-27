@@ -128,6 +128,7 @@ class OverlayView(
         setTextColor(color)
         typeface = if (mono) Typeface.MONOSPACE else Typeface.DEFAULT
         isSingleLine = true
+        includeFontPadding = false
         ellipsize = TextUtils.TruncateAt.END
     }
 
@@ -142,6 +143,7 @@ class OverlayView(
         addView(LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
             setPadding(0, dp(1), 0, dp(1))
             contentDescription = description
             addView(tv(label, 10f, labelColor).apply {
@@ -151,7 +153,9 @@ class OverlayView(
             addView(value, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             addView(confidence)
             setOnTouchListener(dragListener)
-        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        // Emoji yedek fontlarının satır yüksekliğini şişirip veri düğmelerini
+        // ezmesini önle. 15sp değer + dikey boşluk, kullanıcı ölçeğiyle birlikte büyür.
+        }, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(24)))
         return PredictionRow(value, confidence)
     }
 
@@ -170,7 +174,7 @@ class OverlayView(
             visibility = GONE
             setOnTouchListener(dragListener)
         }
-        addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        addView(status, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(16)))
         if (s.showRecent) {
             recent = tv(recentEmpty, 9f, labelColor, mono = true).apply {
                 tag = "recent"
@@ -179,7 +183,7 @@ class OverlayView(
                 setPadding(0, dp(4), 0, dp(6))
                 setOnTouchListener(dragListener)
             }
-            addView(recent, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(recent, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(24)))
         }
     }
 
