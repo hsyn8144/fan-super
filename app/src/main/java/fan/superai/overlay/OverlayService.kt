@@ -64,8 +64,6 @@ class OverlayService : LifecycleService() {
     private var builtWith: AppSettings? = null
     private var posX = 40
     private var posY = 240
-    private var lastW = -1
-    private var lastH = -1
 
     private fun screenSize(): IntArray {
         val dm = DisplayMetrics()
@@ -85,16 +83,11 @@ class OverlayService : LifecycleService() {
             }.collect { (st, busy, e, s) ->
                 val b = builtWith
                 if (b == null || b.overlayHorizontal != s.overlayHorizontal || b.overlayTextScale != s.overlayTextScale ||
-                    b.overlayAlpha != s.overlayAlpha || b.showRecent != s.showRecent || b.vibrate != s.vibrate || b.overlayDetail != s.overlayDetail) {
+                    b.overlayAlpha != s.overlayAlpha || b.showRecent != s.showRecent || b.vibrate != s.vibrate ||
+                    b.pairMode != s.pairMode || b.silentFirst != s.silentFirst) {
                     buildView(s)
                 }
-                view?.update(st, busy, e.values)
-                // Kart büyüdü/küçüldüyse (detay paneli, döndürme) ekran içinde kalmasını sağla.
-                val v = view
-                if (v != null && (v.width != lastW || v.height != lastH)) {
-                    lastW = v.width; lastH = v.height
-                    clampIntoScreen()
-                }
+                view?.update(st, busy, e)
             }
         }
     }
@@ -162,21 +155,16 @@ class OverlayService : LifecycleService() {
         try {
             wm.addView(v, p)
             view = v; params = p; builtWith = s
-            // Ölçüm bittikten sonra kartı ekran içine al (düğmeler erişilebilir kalsın).
+            // Akış güncellemesi ölçümden ÖNCE gelir. Boy/ekran değişikliklerini
+            // layout sonrasında yakala; ek bir motor güncellemesini bekleme.
+            v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> clampIntoScreen() }
             v.post { clampIntoScreen() }
         } catch (e: Exception) {
             stopSelf()
         }
     }
 
-    /**
-     * Ekran döndürülünce (ya da başka bir yapılandırma değişikliğinde) kartın kendi
-     * boyu değişmeyebilir, bu yüzden [onCreate] içindeki "boyu değiştiyse sığdır"
-     * kontrolü tetiklenmeyebilir. Bu, döndürmeden sonra kartın eski (artık yanlış)
-     * konumda kalıp düğmelerin görünen yerle gerçek dokunma alanının uyuşmamasına
-     * ("tuş çalışmıyor" hissi) yol açabiliyordu. Döndürmede her zaman zorla yeniden
-     * ölçüp ekrana sığdırıyoruz.
-     */
+    /** Ekran döndürmede yeniden ölç ve yeni ekran sınırları içine al. */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         view?.let { v ->

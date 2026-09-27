@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.TextView
+import fan.superai.Echo
 import fan.superai.data.AppSettings
 import org.junit.After
 import org.junit.Assert.*
@@ -35,10 +36,10 @@ class OverlayViewTest {
         activity.pause().stop().destroy()
     }
 
-    private fun overlay(horizontal: Boolean = false, recent: Boolean = true, detail: Boolean = true): OverlayView {
+    private fun overlay(horizontal: Boolean = false, recent: Boolean = true, scale: Float = 1f): OverlayView {
         return OverlayView(
             RuntimeEnvironment.getApplication(),
-            AppSettings(overlayHorizontal = horizontal, showRecent = recent, overlayDetail = detail),
+            AppSettings(overlayHorizontal = horizontal, showRecent = recent, overlayTextScale = scale),
             onNumber = { numbers += it }, onDelete = { deletes++ },
             onDrag = { dx, dy -> drags += dx to dy }
         ).apply {
@@ -86,7 +87,7 @@ class OverlayViewTest {
         for (horizontal in listOf(false, true)) {
             for (recent in listOf(false, true)) {
                 val view = overlay(horizontal, recent)
-                for (label in if (horizontal) listOf("FAN ", "Yan ") else listOf("🎯 FAN", "⭐ Yan")) {
+                for (label in listOf("🔵 K", "🐍 Py", "🔵 Yan", "🐍 PyYan")) {
                     drags.clear()
                     drag(view, center(view, text(view, label)))
                     assertEquals(listOf(40 to 25), drags)
@@ -99,7 +100,7 @@ class OverlayViewTest {
         for (horizontal in listOf(false, true)) {
             val view = overlay(horizontal)
             drags.clear()
-            drag(view, center(view, text(view, if (horizontal) "- - - -" else "- - - - - -")))
+            drag(view, center(view, text(view, "- - - - - -")))
             assertEquals(listOf(40 to 25), drags)
             drags.clear()
             drag(view, 1f to 1f)
@@ -123,29 +124,26 @@ class OverlayViewTest {
         assertTrue(drags.isEmpty())
     }
 
-    @Test fun longPressTogglesDetailsAndDetailPanelDrags() {
+    @Test fun longPressKeepsOnlyFourPredictionsAndStillAllowsDragging() {
         val view = overlay()
-        val point = center(view, text(view, "🎯 FAN"))
+        val before = descendants(view).size
+        val point = center(view, text(view, "🔵 K"))
         val time = SystemClock.uptimeMillis()
         event(view, MotionEvent.ACTION_DOWN, point, time)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong() + 1))
-        event(view, MotionEvent.ACTION_UP, point, time)
-        assertTrue(view.detailOpen)
-        assertTrue(drags.isEmpty())
-        val detail = text(view, "🔵 Kotlin  --").parent as View
-        // Dispatch to the revealed panel directly; the window would normally relayout it.
-        val detailTime = SystemClock.uptimeMillis()
-        event(detail, MotionEvent.ACTION_DOWN, 2f to 2f, detailTime)
-        event(detail, MotionEvent.ACTION_MOVE, 32f to 22f, detailTime)
-        event(detail, MotionEvent.ACTION_UP, 32f to 22f, detailTime)
-        assertEquals(listOf(30 to 20), drags)
-        view.toggleDetail()
-        assertFalse(view.detailOpen)
+        event(view, MotionEvent.ACTION_MOVE, point.first + 40f to point.second + 25f, time)
+        event(view, MotionEvent.ACTION_UP, point.first + 40f to point.second + 25f, time)
+        assertEquals(before, descendants(view).size)
+        assertEquals(listOf(40 to 25), drags)
+        val labels = descendants(view).filterIsInstance<TextView>().map { it.text.toString() }
+        assertFalse(labels.any { it.contains("Kalıp") || it.contains("Hakem") || it.contains("FAN") })
+        assertTrue(numbers.isEmpty())
+        assertEquals(0, deletes)
     }
 
     @Test fun cancelledTouchDoesNotCarryPositionIntoNextDrag() {
         val view = overlay()
-        val point = center(view, text(view, "🎯 FAN"))
+        val point = center(view, text(view, "🔵 K"))
         val time = SystemClock.uptimeMillis()
         event(view, MotionEvent.ACTION_DOWN, point, time)
         event(view, MotionEvent.ACTION_CANCEL, point, time)
@@ -169,6 +167,102 @@ class OverlayViewTest {
                     p.first >= 0f && p.first <= cardWidth.toFloat())
                 assertTrue("$label dokunulabilir olmalı (genişlik=${b.width}, yükseklik=${b.height})",
                     b.width >= 12 && b.height >= 20)
+            }
+        }
+    }
+
+    private fun tagged(view: View, tag: String): TextView = descendants(view)
+        .filterIsInstance<TextView>().first { it.tag == tag }
+
+    @Test fun fourRowsUseTheirOwnCouncilEvenWithoutARefereeVerdict() {
+        for (horizontal in listOf(false, true)) {
+            val view = overlay(horizontal)
+            view.update(overlayTestState(), null)
+            assertEquals("1/2", tagged(view, "kotlin.number.value").text.toString())
+            assertEquals("%87", tagged(view, "kotlin.number.confidence").text.toString())
+            assertEquals("4/3", tagged(view, "python.number.value").text.toString())
+            assertEquals("%75", tagged(view, "python.number.confidence").text.toString())
+            assertEquals("T•K", tagged(view, "kotlin.side.value").text.toString())
+            assertEquals("%84", tagged(view, "kotlin.side.confidence").text.toString())
+            assertEquals("Ç•B", tagged(view, "python.side.value").text.toString())
+            assertEquals("%68", tagged(view, "python.side.confidence").text.toString())
+        }
+    }
+
+    @Test fun missingPythonAndResetClearOldPredictions() {
+        val view = overlay()
+        view.update(overlayTestState(), null)
+        view.update(overlayTestState().copy(pythonProbs = null), null)
+        assertEquals("1/2", tagged(view, "kotlin.number.value").text.toString())
+        for (key in listOf("python.number", "python.side")) {
+            assertEquals("--", tagged(view, "$key.value").text.toString())
+            assertEquals("--", tagged(view, "$key.confidence").text.toString())
+        }
+        view.update(null, null)
+        for (key in listOf("kotlin.number", "python.number", "kotlin.side", "python.side")) {
+            assertEquals("--", tagged(view, "$key.value").text.toString())
+            assertEquals("--", tagged(view, "$key.confidence").text.toString())
+        }
+    }
+
+    @Test fun recentSixAreNewestFirstInBothLayoutsBeforeAndAfterMotorCatchesUp() {
+        for (horizontal in listOf(false, true)) {
+            val view = overlay(horizontal)
+            val st = overlayTestState()
+            view.update(st, null)
+            assertEquals("3 2 4 1 3 2", tagged(view, "recent").text.toString())
+            val echo = Echo(st.count, listOf(1))
+            view.update(st, "Hesaplanıyor", echo)
+            assertEquals("1 3 2 4 1 3", tagged(view, "recent").text.toString())
+            val next = st.copy(count = st.count + 1, recent = (st.recent + 1).takeLast(6))
+            view.update(next, null, echo)
+            assertEquals("1 3 2 4 1 3", tagged(view, "recent").text.toString())
+            view.update(next, null)
+            assertEquals("1 3 2 4 1 3", tagged(view, "recent").text.toString())
+            // DEL motoru önceki duruma döndürdüğünde soldaki en yeni sayı kalkar.
+            view.update(st, null)
+            assertEquals("3 2 4 1 3 2", tagged(view, "recent").text.toString())
+        }
+    }
+
+    @Test fun learningKeepsInputAvailableAndDoesNotFakePythonPrediction() {
+        val view = overlay()
+        view.update(overlayTestState().copy(count = 12, learning = true, pythonProbs = null), null)
+        assertEquals("…", tagged(view, "kotlin.number.value").text.toString())
+        assertEquals("12/50", tagged(view, "kotlin.number.confidence").text.toString())
+        assertEquals("--", tagged(view, "python.number.value").text.toString())
+        assertTrue(text(view, "1").isEnabled)
+        assertTrue(text(view, "DEL").isEnabled)
+    }
+
+    @Test fun approvedVerticalLayoutHasRecentThenFullWidthStackedButtons() {
+        val view = overlay()
+        val recentY = center(view, tagged(view, "recent")).second
+        val buttons = listOf("DEL", "4", "3", "2", "1").map { text(view, it) }
+        assertTrue(center(view, buttons.first()).second > recentY)
+        buttons.zipWithNext().forEach { (a, b) ->
+            assertTrue(center(view, a).second < center(view, b).second)
+            assertEquals(a.width, b.width)
+            assertEquals(center(view, a).first, center(view, b).first, 0.01f)
+        }
+        assertEquals(view.width - view.paddingLeft - view.paddingRight, buttons.first().width)
+    }
+
+    @Test fun buttonBoundsFitAfterShortScreenRemeasureAtEveryTextScale() {
+        for (scale in listOf(.85f, 1f, 1.2f)) {
+            val view = overlay(scale = scale)
+            val density = view.resources.displayMetrics.density
+            val maxHeight = (300 * density).toInt()
+            view.measure(View.MeasureSpec.makeMeasureSpec((320 * density).toInt(), View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
+            view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+            assertTrue(view.height <= maxHeight)
+            for (label in listOf("DEL", "4", "3", "2", "1")) {
+                val button = text(view, label)
+                val c = center(view, button)
+                assertTrue("$label üst sınır", c.second - button.height / 2f >= 0)
+                assertTrue("$label alt sınır", c.second + button.height / 2f <= view.height)
+                assertTrue("$label dokunma alanı", button.height >= 20 * density)
             }
         }
     }

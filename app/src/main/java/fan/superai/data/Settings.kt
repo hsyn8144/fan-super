@@ -26,7 +26,7 @@ data class AppSettings(
     val battery: Boolean = false,
     // Overlay
     val overlayHorizontal: Boolean = false,
-    val overlayDetail: Boolean = true,
+    val overlayDetail: Boolean = true, // Eski tercih ile uyumluluk; detaylar artık uygulamada.
     val overlayAlpha: Float = 0.8f,
     val overlayTextScale: Float = 1.0f,
     val showRecent: Boolean = true,
