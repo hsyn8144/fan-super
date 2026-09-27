@@ -148,7 +148,6 @@ fun SettingsScreen() {
         }
         FCard("🪟 Overlay") {
             Choice("Yerleşim", null, s.overlayHorizontal, listOf(false to "Dikey", true to "Yatay")) { v -> set { it.copy(overlayHorizontal = v) } }
-            Toggle("Uzun basınca detay paneli", null, s.overlayDetail) { v -> set { it.copy(overlayDetail = v) } }
             Choice("Saydamlık", null, s.overlayAlpha, listOf(0.6f to "%60", 0.7f to "%70", 0.8f to "%80", 0.9f to "%90", 1.0f to "%100")) { v -> set { it.copy(overlayAlpha = v) } }
             Choice("Yazı boyutu", null, s.overlayTextScale, listOf(0.85f to "Küçük", 1.0f to "Normal", 1.2f to "Büyük")) { v -> set { it.copy(overlayTextScale = v) } }
             Toggle("Son sayı dizisini göster", null, s.showRecent) { v -> set { it.copy(showRecent = v) } }
@@ -171,7 +170,7 @@ fun SettingsScreen() {
         FCard("ℹ️ Hakkında") {
             KV("Uygulama", "FAN SUPER")
             KV("Paket", "fan.superai")
-            KV("Sürüm", "1.0")
+            KV("Sürüm", fan.superai.BuildConfig.VERSION_NAME)
             KV("Üyeler", "🔵 ${KOTLIN_NAMES.size} · 🐍 ${PYTHON_NAMES.size}")
             KV("Kayıt", "${st?.count ?: 0}")
             Muted("Başarı her zaman şans çizgisiyle (tek %25, çift %50) karşılaştırılır. Hiçbir yöntem rastgele bir veride şansı kalıcı olarak geçemez.",

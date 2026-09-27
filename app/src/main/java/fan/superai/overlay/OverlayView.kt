@@ -6,32 +6,28 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.View
+import android.view.ViewConfiguration
 import android.widget.LinearLayout
 import android.widget.TextView
+import fan.superai.Echo
 import fan.superai.data.AppSettings
 import fan.superai.engine.EngineState
 import kotlin.math.abs
-import kotlin.math.min
 
 /**
- * Overlay kartı (v9.6 ile aynı mavi kart, aynı buton sırası):
- *   🎯 FAN   2/3  %34
- *   ⭐ Yan   T•K  %61
- *   [uzun bas → detay: Kotlin / Python / Hakem / en iyi 3 üye]
- *   2 3 1 4 2 3
- *   [DEL][4][3][2][1]
+ * Onaylanan v9.6 mavi kartı, Kalıp satırı olmadan:
+ *   🔵 K      Kotlin rakam tahmini
+ *   🐍 Py     Python rakam tahmini
+ *   🔵 Yan    Kotlin yan tahmini
+ *   🐍 PyYan  Python yan tahmini
+ *   son 6 sayı (en yeni solda)
+ *   DEL / 4 / 3 / 2 / 1 (alt alta)
  *
- * DÜĞME GÜVENİLİRLİĞİ
- *  - Kart hiçbir zaman ekrandan geniş olamaz ([onMeasure] ekran genişliğiyle sınırlar),
- *    yatay görünümde tahmin satırı daralabilir; böylece sayı düğmeleri her zaman
- *    ekranın içinde ve basılabilir kalır.
- *  - Düğmeler daha yüksek dokunma alanına ve basılı görünümüne sahiptir.
- *  - [update] çağrısına verilen `echo` listesi, düğmeye basıldığı anda son sayılar
- *    satırında görünür; motor hesabı bitince gerçek değerle değiştirilir.
+ * Yatay ayarı korunur: aynı dört satır solda, düğmeler sağda.
+ * Meclis/hakem detayları uygulamada kalır. Tahmin alanı ve kart kenarları
+ * sürüklenebilir; veri düğmeleri sürükleme dinleyicisine bağlanmaz.
  */
 @SuppressLint("ViewConstructor", "SetTextI18n", "ClickableViewAccessibility")
 class OverlayView(
@@ -41,248 +37,213 @@ class OverlayView(
     private val onDelete: () -> Unit,
     private val onDrag: (dx: Int, dy: Int) -> Unit
 ) : LinearLayout(ctx) {
-
     private val sc = s.overlayTextScale
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun screenWidth() = resources.displayMetrics.widthPixels.coerceAtLeast(dp(120))
-
-    private lateinit var tvMain: TextView
-    private lateinit var tvMainC: TextView
-    private lateinit var tvSide: TextView
-    private lateinit var tvSideC: TextView
-    private var tvK: TextView? = null
-    private var tvP: TextView? = null
-    private var tvRef: TextView? = null
-    private var tvTop: TextView? = null
-    private var detail: LinearLayout? = null
-    private var tvRecent: TextView? = null
-    private var tvBusy: TextView? = null
-    private var recentEmpty = "- - - - - -"
-    private var recentJoin = " "
-    var detailOpen = false
-        private set
-
+    private fun scaledDp(v: Int) = dp((v * sc).toInt())
     private val labelColor = Color.parseColor("#BBDEFB")
     private val confColor = Color.parseColor("#FFB74D")
+    private val green = Color.parseColor("#81C784")
+    private val purple = Color.parseColor("#CE93D8")
 
-    private fun tv(text: String, size: Float, color: Int, bold: Boolean = false, mono: Boolean = false) = TextView(context).apply {
-        this.text = text; textSize = size * sc; setTextColor(color)
-        typeface = if (mono) Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
-        else if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-    }
+    private data class PredictionRow(val value: TextView, val confidence: TextView)
+    private lateinit var kotlinNumber: PredictionRow
+    private lateinit var pythonNumber: PredictionRow
+    private lateinit var kotlinSide: PredictionRow
+    private lateinit var pythonSide: PredictionRow
+    private var recent: TextView? = null
+    private lateinit var status: TextView
+    private val recentEmpty = "- - - - - -"
 
-    /** Tek satır + sonu kırpma: dar ekranda taşmayı önler. */
-    private fun TextView.oneLine() = apply {
-        isSingleLine = true
-        ellipsize = TextUtils.TruncateAt.END
-    }
-
-    private val gesture = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent) = true
-        override fun onLongPress(e: MotionEvent) { if (s.overlayDetail) toggleDetail() }
-    })
-    private var lx = 0f; private var ly = 0f
-    private val dragListener = OnTouchListener { _, e ->
-        gesture.onTouchEvent(e)
+    private val touchSlop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private var lastX = 0f
+    private var lastY = 0f
+    private var tracking = false
+    private var dragging = false
+    // Dinleyici, init içinde görünümler kurulmadan önce oluşturulmalı.
+    private val dragListener = OnTouchListener { v, e ->
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { lx = e.rawX; ly = e.rawY }
-            MotionEvent.ACTION_MOVE -> {
-                val dx = (e.rawX - lx).toInt(); val dy = (e.rawY - ly).toInt()
-                if (abs(dx) > 0 || abs(dy) > 0) { onDrag(dx, dy); lx = e.rawX; ly = e.rawY }
+            MotionEvent.ACTION_DOWN -> {
+                lastX = e.rawX; lastY = e.rawY
+                tracking = true; dragging = false
             }
+            MotionEvent.ACTION_MOVE -> if (tracking) {
+                val dx = e.rawX - lastX
+                val dy = e.rawY - lastY
+                if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) dragging = true
+                if (dragging) {
+                    onDrag(dx.toInt(), dy.toInt())
+                    lastX = e.rawX; lastY = e.rawY
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (tracking && !dragging) v.performClick()
+                tracking = false; dragging = false
+            }
+            MotionEvent.ACTION_CANCEL -> { tracking = false; dragging = false }
         }
         true
     }
 
-    // Kotlin initializes properties and init blocks in source order. The gesture
-    // detector and listener must exist before building any of the touch targets.
     init {
-        orientation = VERTICAL
+        orientation = if (s.overlayHorizontal) HORIZONTAL else VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        // Sayılar, RTL telefonlarda da en yenisi solda kalacak şekilde gösterilir.
+        layoutDirection = LAYOUT_DIRECTION_LTR
         background = GradientDrawable().apply {
             cornerRadius = dp(14).toFloat()
             setColor(Color.argb((s.overlayAlpha * 255).toInt(), 0x15, 0x65, 0xC0))
         }
-        setPadding(dp(8), dp(6), dp(8), dp(6))
+        setPadding(dp(10), dp(10), dp(10), dp(10))
         setOnTouchListener(dragListener)
-        if (s.overlayHorizontal) buildHorizontal() else buildVertical()
+        val panel = buildPredictionPanel()
+        if (s.overlayHorizontal) {
+            addView(panel, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            addView(buttons(true), LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = dp(8)
+            })
+        } else {
+            addView(panel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            // Ağırlık kısa ekranlarda düğme grubunun daralmasını sağlar. Dört tahmin
+            // satırı yerinde kalır, alttaki 1 düğmesi ekran dışına itilmez.
+            addView(buttons(false), LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(220), 1f))
+        }
     }
 
-    /**
-     * Kartı ekran genişliğiyle sınırlar. FLAG_LAYOUT_NO_LIMITS ile pencere ekran
-     * dışına taşabildiği için bu sınır olmazsa yatay kartta sağdaki düğmeler
-     * ekran dışında kalıyordu (düğme "bozuldu" hissinin ana nedeni).
-     */
+    /** Sabit kompakt genişlik: tahmin değiştikçe kartın eni/konumu oynamaz. */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val max = screenWidth()
-        val mode = MeasureSpec.getMode(widthMeasureSpec)
-        val size = MeasureSpec.getSize(widthMeasureSpec)
-        val spec = if (mode == MeasureSpec.UNSPECIFIED || size == 0 || size > max)
-            MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST) else widthMeasureSpec
-        super.onMeasure(spec, heightMeasureSpec)
-    }
-
-    private fun row(label: String, main: TextView, conf: TextView): LinearLayout = LinearLayout(context).apply {
-        orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        addView(tv(label, 11f, labelColor).apply { minWidth = dp((52 * sc).toInt()) })
-        addView(main, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(4) })
-        addView(conf.apply { gravity = Gravity.END; minWidth = dp((32 * sc).toInt()) })
-        setOnTouchListener(dragListener)
-    }
-
-    /**
-     * Veri girişi düğmesi. [minH] dokunma alanını büyütür; basılıyken rengi koyulaşır
-     * (dokunma geri bildirimi), titreşim açıksa hafif titreşim verir.
-     */
-    private fun button(text: String, color: String, size: Float, minH: Int, action: () -> Unit) = TextView(context).apply {
-        this.text = text; textSize = size * sc; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-        typeface = Typeface.DEFAULT_BOLD
-        background = GradientDrawable().apply { cornerRadius = dp(7).toFloat(); setColor(Color.parseColor(color)) }
-        setPadding(dp(2), dp(4), dp(2), dp(4))
-        minimumHeight = minH
-        minHeight = minH
-        isClickable = true
-        isFocusable = true
-        setOnClickListener {
-            if (s.vibrate) performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
-            action()
-        }
-        setOnTouchListener { v, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> v.alpha = 0.55f
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.alpha = 1f
-            }
-            false   // tıklama yine düğmenin kendi onTouchEvent'inde işlenir
-        }
-    }
-
-    private fun buttons(compact: Boolean): LinearLayout = LinearLayout(context).apply {
-        orientation = HORIZONTAL
-        val sz = if (compact) 12f else 14f
-        val minH = dp(if (compact) (30 * sc).toInt() else (38 * sc).toInt())
-        // Dar ekranda düğme satırı ekranın en fazla %45'ini kaplar → hepsi görünür kalır.
-        val room = (screenWidth() * 0.45f).toInt() - 4 * dp(4)
-        val bw = if (compact) min(dp((28 * sc).toInt()), maxOf(dp(18), room / 5)) else 0
-        val items = listOf(
-            button(if (compact) "⌫" else "DEL", "#78909C", if (compact) 11f else 10f, minH) { onDelete() },
-            button("4", "#F44336", sz, minH) { onNumber(4) },
-            button("3", "#FF9800", sz, minH) { onNumber(3) },
-            button("2", "#2196F3", sz, minH) { onNumber(2) },
-            button("1", "#4CAF50", sz, minH) { onNumber(1) }
+        val dm = resources.displayMetrics
+        fun limit(spec: Int, screen: Int): Int = if (MeasureSpec.getMode(spec) == MeasureSpec.UNSPECIFIED)
+            screen else minOf(screen, MeasureSpec.getSize(spec))
+        val width = minOf(scaledDp(if (s.overlayHorizontal) 380 else 148), limit(widthMeasureSpec, dm.widthPixels))
+        val height = limit(heightMeasureSpec, dm.heightPixels)
+        super.onMeasure(
+            MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(height, MeasureSpec.AT_MOST)
         )
-        items.forEachIndexed { i, b ->
-            addView(b, LayoutParams(if (compact) bw else 0, LayoutParams.WRAP_CONTENT, if (compact) 0f else 1f).apply {
-                if (i > 0) leftMargin = dp(4)
+    }
+
+    private fun tv(text: String, size: Float, color: Int, mono: Boolean = false) = TextView(context).apply {
+        this.text = text
+        textSize = size * sc
+        setTextColor(color)
+        typeface = if (mono) Typeface.MONOSPACE else Typeface.DEFAULT
+        isSingleLine = true
+        includeFontPadding = false
+        ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private fun LinearLayout.predictionRow(
+        key: String, label: String, description: String, labelColor: Int, valueColor: Int, confidenceColor: Int
+    ): PredictionRow {
+        val value = tv("--", 15f, valueColor, mono = true).apply { tag = "$key.value" }
+        val confidence = tv("--", 10f, confidenceColor, mono = true).apply {
+            tag = "$key.confidence"
+            gravity = Gravity.END
+        }
+        addView(LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
+            setPadding(0, dp(1), 0, dp(1))
+            contentDescription = description
+            addView(tv(label, 10f, labelColor).apply {
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(0, 0, dp(6), 0)
+            })
+            addView(value, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            addView(confidence)
+            setOnTouchListener(dragListener)
+        // Emoji yedek fontlarının satır yüksekliğini şişirip veri düğmelerini
+        // ezmesini önle. 15sp değer + dikey boşluk, kullanıcı ölçeğiyle birlikte büyür.
+        }, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(24)))
+        return PredictionRow(value, confidence)
+    }
+
+    private fun buildPredictionPanel() = LinearLayout(context).apply {
+        orientation = VERTICAL
+        setOnTouchListener(dragListener)
+        kotlinNumber = predictionRow("kotlin.number", "🔵 K", "Kotlin rakam tahmini",
+            Color.parseColor("#64B5F6"), Color.WHITE, confColor)
+        pythonNumber = predictionRow("python.number", "🐍 Py", "Python rakam tahmini",
+            green, Color.parseColor("#A5D6A7"), green)
+        kotlinSide = predictionRow("kotlin.side", "🔵 Yan", "Kotlin yan tahmini", purple, purple, purple)
+        pythonSide = predictionRow("python.side", "🐍 PyYan", "Python yan tahmini",
+            green, Color.parseColor("#A5D6A7"), green)
+        status = tv("", 9f, confColor).apply {
+            gravity = Gravity.CENTER
+            visibility = GONE
+            setOnTouchListener(dragListener)
+        }
+        addView(status, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(16)))
+        if (s.showRecent) {
+            recent = tv(recentEmpty, 9f, labelColor, mono = true).apply {
+                tag = "recent"
+                gravity = Gravity.CENTER
+                contentDescription = "Son 6 veri, en yeni solda"
+                setPadding(0, dp(4), 0, dp(6))
+                setOnTouchListener(dragListener)
+            }
+            addView(recent, LayoutParams(LayoutParams.MATCH_PARENT, scaledDp(24)))
+        }
+    }
+
+    private fun button(label: String, color: String, compact: Boolean, action: () -> Unit) =
+        tv(label, if (label == "DEL" || label == "⌫") 12f else 14f, Color.WHITE).apply {
+            gravity = Gravity.CENTER
+            // Eski karttaki tam genişlikli, düz renkli düğmeler.
+            setBackgroundColor(Color.parseColor(color))
+            isClickable = true
+            isFocusable = true
+            contentDescription = if (label == "DEL" || label == "⌫") "Son veriyi sil" else "$label ekle"
+            setOnClickListener {
+                if (s.vibrate) performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                action()
+            }
+            if (compact) textSize = 12f * sc
+            setOnTouchListener { v, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> v.alpha = 0.55f
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.alpha = 1f
+                }
+                false // Tıklamayı düğmenin kendisi işler; sürükleme veri girişi üretmez.
+            }
+        }
+
+    private fun buttons(compact: Boolean) = LinearLayout(context).apply {
+        orientation = if (compact) HORIZONTAL else VERTICAL
+        val room = resources.displayMetrics.widthPixels - scaledDp(148) - dp(28) - dp(20)
+        val width = minOf(scaledDp(38), (room / 5).coerceAtLeast(dp(18)))
+        val items = listOf(
+            button(if (compact) "⌫" else "DEL", "#78909C", compact) { onDelete() },
+            button("4", "#F44336", compact) { onNumber(4) },
+            button("3", "#FF9800", compact) { onNumber(3) },
+            button("2", "#2196F3", compact) { onNumber(2) },
+            button("1", "#4CAF50", compact) { onNumber(1) }
+        )
+        items.forEach { b ->
+            addView(b, if (compact) LayoutParams(width, scaledDp(38)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            } else LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                setMargins(0, dp(2), 0, dp(2))
             })
         }
     }
 
-    private fun buildVertical() {
-        minimumWidth = dp((170 * sc).toInt())
-        tvMain = tv("--", 17f, Color.WHITE, bold = true, mono = true)
-        tvMainC = tv("--", 10f, confColor, mono = true)
-        tvSide = tv("--", 17f, Color.parseColor("#E1BEE7"), bold = true, mono = true)
-        tvSideC = tv("--", 10f, confColor, mono = true)
-        addView(row("🎯 FAN", tvMain, tvMainC))
-        addView(row("⭐ Yan", tvSide, tvSideC))
-        // Detay paneli
-        val d = LinearLayout(context).apply {
-            orientation = VERTICAL; visibility = GONE; setPadding(0, dp(4), 0, 0)
-            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(0, 0) }
-            setOnTouchListener(dragListener)
-        }
-        d.addView(View(context).apply { setBackgroundColor(Color.parseColor("#6690CAF9")) }, LayoutParams(LayoutParams.MATCH_PARENT, dp(1)))
-        tvK = tv("🔵 Kotlin  --", 11f, Color.WHITE, mono = true)
-        tvP = tv("🐍 Python  --", 11f, Color.WHITE, mono = true)
-        tvRef = tv("⚖️ Hakem   --", 10f, labelColor, mono = true)
-        tvTop = tv("🏆 --", 9f, labelColor, mono = true).apply { gravity = Gravity.CENTER }
-        listOf(tvK, tvP, tvRef, tvTop).forEach { d.addView(it) }
-        detail = d
-        addView(d)
-        tvBusy = tv("", 9f, confColor).apply { gravity = Gravity.CENTER; visibility = GONE }
-        addView(tvBusy, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        if (s.showRecent) {
-            tvRecent = tv(recentEmpty, 9f, labelColor, mono = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(3), 0, 0); setOnTouchListener(dragListener) }
-            addView(tvRecent, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        }
-        addView(buttons(false), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
-    }
-
-    private fun buildHorizontal() {
-        orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(6), dp(5), dp(6), dp(5))
-        recentEmpty = "- - - -"
-        recentJoin = ""                     // dar satırda sayılar bitişik: "2314"
-        tvMain = tv("--", 15f, Color.WHITE, bold = true, mono = true).oneLine()
-        tvMainC = tv("--", 10f, confColor, mono = true).oneLine()
-        tvSide = tv("--", 14f, Color.parseColor("#E1BEE7"), bold = true, mono = true).oneLine()
-        tvSideC = tv("--", 10f, confColor, mono = true).oneLine()
-        val sep = { tv(" │ ", 12f, Color.parseColor("#90CAF9")) }
-        val gap = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(3) }
-        val info = LinearLayout(context).apply {
-            orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            clipChildren = true             // dar ekranda taşan kısım kırpılır, düğmelerin üstüne çizilmez
-            setOnTouchListener(dragListener)
-            addView(tv("FAN ", 11f, labelColor))
-            addView(tvMain)
-            addView(tvMainC, gap)
-            addView(sep())
-            addView(tv("Yan ", 11f, labelColor))
-            addView(tvSide)
-            addView(tvSideC, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(3) })
-        }
-        // Tahmin satırı daralabilir (ağırlık 1) → sayı düğmeleri her zaman kart içinde kalır.
-        addView(info, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        if (s.showRecent) {
-            addView(sep())
-            tvRecent = tv(recentEmpty, 9f, labelColor, mono = true).apply {
-                setOnTouchListener(dragListener); oneLine(); maxWidth = dp((56 * sc).toInt())
-            }
-            addView(tvRecent)
-        }
-        addView(buttons(true))
-    }
-
-    fun toggleDetail() {
-        val d = detail ?: return
-        detailOpen = !detailOpen
-        d.visibility = if (detailOpen) VISIBLE else GONE
-    }
-
-    /**
-     * @param echo düğmeye basıldığı anda eklenen, motoru henüz işlemediği sayılar
-     *             (anında geri bildirim; motor durumu gelince kendiliğinden düşer).
-     */
     @JvmOverloads
-    fun update(st: EngineState?, busy: String?, echo: List<Int> = emptyList()) {
-        tvBusy?.let { it.visibility = if (busy != null) VISIBLE else GONE; it.text = busy ?: "" }
-        val v = st?.verdict
-        if (st == null || v == null) {
-            tvMain.text = "--"; tvMainC.text = "--"; tvSide.text = "--"; tvSideC.text = "--"
-            tvRecent?.text = if (echo.isEmpty()) recentEmpty else echo.joinToString(recentJoin)
-            return
+    fun update(st: EngineState?, busy: String?, echo: Echo = Echo(0, emptyList())) {
+        status.text = busy ?: ""
+        status.visibility = if (busy == null) GONE else VISIBLE
+        fun bind(number: PredictionRow, side: PredictionRow, probs: DoubleArray?) {
+            val p = councilPrediction(probs, single = s.pairMode == 2)
+            val learning = st?.learning == true && probs != null
+            number.value.text = if (learning) "…" else p.number
+            number.confidence.text = if (learning) "${st?.count}/${s.silentFirst}" else p.numberConfidence
+            side.value.text = p.side
+            side.confidence.text = p.sideConfidence
         }
-        if (st.learning) {
-            tvMain.text = "…"; tvMainC.text = "${st.count}/50"
-        } else {
-            tvMain.text = v.label
-            tvMain.setTextColor(if (v.secondary == null) Color.parseColor("#A5D6A7") else Color.WHITE)
-            tvMainC.text = "%${(v.confidence * 100).toInt()}"
-        }
-        val hit = st.lastSideHit == true
-        tvSide.text = v.sideLabel + if (hit) "=" else ""
-        tvSide.setTextColor(if (hit) Color.parseColor("#81C784") else Color.parseColor("#E1BEE7"))
-        tvSideC.text = "%${(v.sideConfidence * 100).toInt()}"
-        val recent = if (echo.isEmpty()) st.recent else (st.recent + echo).takeLast(6)
-        tvRecent?.text = if (recent.isEmpty()) recentEmpty else recent.joinToString(recentJoin)
-        fun lab(p: DoubleArray?): String {
-            if (p == null) return "--"
-            val o = fan.superai.engine.P.order(p)
-            return "${o[0] + 1}/${o[1] + 1} %${((p[o[0]] + p[o[1]]) * 100).toInt()}"
-        }
-        tvK?.text = "🔵 Kotlin  ${lab(st.kotlinProbs)}"
-        tvP?.text = "🐍 Python  ${lab(st.pythonProbs)}"
-        tvRef?.text = "⚖️ 🔵${(v.weightK * 100).toInt()} · 🐍${(v.weightP * 100).toInt()}"
-        val top = (st.kotlinStats + st.pythonStats).filter { it.enabled && !it.benched }.sortedByDescending { it.weight }.take(3)
-        tvTop?.text = "🏆 " + top.joinToString(" · ") { it.name.replace(" ", "").take(10) }
+        bind(kotlinNumber, kotlinSide, st?.kotlinProbs)
+        bind(pythonNumber, pythonSide, st?.pythonProbs)
+        val values = overlayRecent(st, echo)
+        recent?.text = if (values.isEmpty()) recentEmpty else values.joinToString(" ")
     }
 }

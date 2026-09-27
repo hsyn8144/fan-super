@@ -1,9 +1,11 @@
-# FAN SUPER
+# FAN SUPER v1.1
 
 Tek uygulamada iki meclis: **🔵 Kotlin Meclisi** (8 üye) ve **🐍 Python Meclisi** (10 üye, Chaquopy ile uygulamaya gömülü).
 İki meclis kendi içinde **Fixed-Share Hedge** ile yarışır; **⚖️ Baş Hakem** (stacking + kalibrasyon + konformal tek/çift kararı)
-tek bir **rakam tahmini** ve tek bir **yan tahmin** (T/Ç • K/B) üretir. Overlay görünümü v9.6 ile aynıdır.
+uygulama içinde tek bir **rakam tahmini** ve tek bir **yan tahmin** (T/Ç • K/B) üretir.
+Overlay ise v9.6 mavi kartının **Kalıp satırı çıkarılmış** halidir; Kotlin ve Python tahminlerini ayrı gösterir.
 
+- Sürüm: **1.1** (`versionCode = 2`)
 - Paket: `fan.superai` (`super` Java/Kotlin'de ayrılmış kelime olduğu için `fan.super.ai` kullanılamaz)
 - Hazır veri: `app/src/main/assets/fan_data_live.csv` (893 kayıt) ilk açılışta yüklenir.
 
@@ -27,14 +29,37 @@ GitHub Actions (`.github/workflows/build.yml`) her push'ta APK üretir; main dal
 Yerelde: JDK 17 + Python 3.11 kurulu iken `./gradlew assembleDebug`.
 
 ## Overlay kullanımı ve testler
-Kartı taşımak için FAN/Yan tahmin satırını, son sayıları veya kartın boş kenarını
-basılı tutup sürükleyin (yatay ve dikey görünümde). Sayı ve DEL düğmeleri veri
-girişi için ayrılmıştır. Dikey görünümde tahmin satırına uzun basmak detayları açar.
+Varsayılan dikey kartın sırası:
+1. **🔵 K** — Kotlin rakam tahmini
+2. **🐍 Py** — Python rakam tahmini
+3. **🔵 Yan** — Kotlin yan tahmini (T/Ç • K/B)
+4. **🐍 PyYan** — Python yan tahmini (T/Ç • K/B)
+5. **Son 6 veri**, en yeni veri **solda**
+6. **DEL → 4 → 3 → 2 → 1**, tam genişlikte ve **alt alta**
+
+Kalıp ve hakem/meclis detayları overlay'de gösterilmez; uygulamanın içindeki
+meclisler, modeller, veriler, öğrenme ve geri alma işlemleri değişmemiştir.
+Tahmin satırlarından, son sayılardan veya kartın boş kenarlarından tutup sürükleyin.
+Sürükleme için uzun basmayı beklemek gerekmez; sayı/DEL düğmeleri veri girişi içindir.
+Yatay yerleşim ayarı korunur: dört tahmin satırı solda, düğmeler sağdadır.
+Saydamlık, yazı boyutu, son sayı dizisini gösterme ve titreşim ayarları korunur.
+
+**Tahmin kaynağı:** K/Py rakamları doğrudan ilgili meclisin olasılık dağılımındaki
+ilk iki adaydır ("Her zaman tek" seçilirse yalnızca ilk aday). Otomatik konformal
+tek/çift kararı ve kalibrasyon hakeme ait olduğu için bunlar meclis satırlarına
+kopyalanmaz; overlay yüzdeleri ilgili adayların ham olasılık toplamıdır. Yan tahmini
+her meclisin kendi dağılımından türetilir; yan yüzdesi tek/çift ve küçük/büyük
+güvenlerinin ortalamasıdır. Python hazır/aktif değilse iki Python satırı `--` gösterir;
+Kotlin veya hakem sonucu Python tahmini gibi gösterilmez.
+
+Son veriler yalnızca gösterimde ters çevrilir, motor geçmişinin sırası değişmez.
+Bekleyen girişlerin motor tarafından işlenmiş bölümü tekrar eklenmez; böylece motor
+hesap yaparken son 6 satırında aynı giriş iki kez görünmez.
 
 Overlay dokunma regresyon testleri: `./gradlew testDebugUnitTest`.
 GitHub Actions bu testleri APK derlemesiyle birlikte çalıştırır ve test raporlarını
 `overlay-test-reports`, kurulabilir APK'yı `FAN_SUPER_APK`, tüm kaynak kodları
-`FanSuper.zip` olarak `FanSuper_SOURCE` artifact'ında saklar (main'de ayrıca Release'e konur).
+`FanSuper_v1.1.zip` olarak `FanSuper_SOURCE` artifact'ında saklar (main'de ayrıca Release'e konur).
 
 ## Veri girişi düğmeleri ve hızlı geri alma (⌫ / DEL)
 - **Anında geri bildirim:** Sayı düğmesine basıldığı anda rakam "Son 6" satırında görünür;
@@ -53,4 +78,4 @@ GitHub Actions bu testleri APK derlemesiyle birlikte çalıştırır ve test rap
   olarak görünür.
 
 Python geri alma testleri (yerelde): `pip install "numpy<2"` sonra
-`cd app/src/main/python && python ../test/python/test_fan_super.py -v`.
+`python app/src/test/python/test_fan_super.py -v`.

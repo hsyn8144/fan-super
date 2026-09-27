@@ -123,21 +123,24 @@ jobs:
             app/build/test-results/
           if-no-files-found: ignore
 
-      - name: APK adını düzenle
+      - name: Sürümlü APK ve kaynak ZIP paketi
+        id: package
         run: |
+          set -euo pipefail
+          VERSION=$(python3 - <<'PYVERSION'
+          import json
+          with open("app/build/outputs/apk/debug/output-metadata.json") as f:
+              print(json.load(f)["elements"][0]["versionName"])
+          PYVERSION
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/FAN_SUPER_v1.0_build${{ github.run_number }}.apk
-          ls -la out
-
-      - name: Kaynak kod paketi (FanSuper.zip)
-        run: |
-          mkdir -p out
-          rm -f out/FanSuper.zip
-          zip -r -q out/FanSuper.zip . \
-            -x ".git/*" -x "*/build/*" -x ".gradle/*" -x "out/*" -x ".idea/*" \
-            -x "*.apk" -x "*.log" -x "err.txt" -x ".kotlin/*" -x "*/__pycache__/*" -x "local.properties"
-          unzip -l out/FanSuper.zip | tail -3
-          ls -la out
+          cp app/build/outputs/apk/debug/app-debug.apk "out/FAN_SUPER_v${VERSION}_build${{ github.run_number }}.apk"
+          # Yalnızca bu commit'in kaynakları; yerel ayarlar, anahtarlar, loglar ve build dosyaları yok.
+          git archive --format=zip --prefix="FanSuper_v${VERSION}/" --output="out/FanSuper_v${VERSION}.zip" HEAD
+          (cd out && sha256sum *.apk *.zip > SHA256SUMS.txt)
+          unzip -t "out/FanSuper_v${VERSION}.zip" | tail -1
+          ls -lh out
 
       - name: Artifact yükle
         uses: actions/upload-artifact@v4
@@ -149,17 +152,27 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FanSuper_SOURCE
-          path: out/FanSuper.zip
+          path: |
+            out/FanSuper_v*.zip
+            out/SHA256SUMS.txt
 
       - name: Release (main)
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: FAN SUPER v1.0 (build ${{ github.run_number }})
+          tag_name: v${{ steps.package.outputs.version }}-build${{ github.run_number }}
+          name: FAN SUPER v${{ steps.package.outputs.version }} (build ${{ github.run_number }})
           body: |
-            **FAN_SUPER_APK** → telefona kurulabilir APK.
-            **FanSuper.zip** → bu sürümün tüm kaynak kodları (Android Studio / `./gradlew assembleDebug` ile derlenebilir).
+            ## FAN SUPER v${{ steps.package.outputs.version }}
+            - Eski mavi overlay geri geldi; Kalıp satırı kaldırıldı.
+            - Kotlin/Python rakam ve yan tahminleri ayrı satırlarda.
+            - Son 6 veri, en yeni solda; DEL–4–3–2–1 düğmeleri alt alta.
+            - Sürükleme ve ekran sınırları; meclis motorları korunur.
+
+            **FAN_SUPER_v${{ steps.package.outputs.version }}_build${{ github.run_number }}.apk** → Android uygulaması (debug imzalı).
+            **FanSuper_v${{ steps.package.outputs.version }}.zip** → bu sürümün kaynak kodları.
+            **SHA256SUMS.txt** → APK ve ZIP doğrulama özetleri.
           files: |
             out/*.apk
-            out/FanSuper.zip
+            out/FanSuper_v*.zip
+            out/SHA256SUMS.txt
