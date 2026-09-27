@@ -262,7 +262,12 @@ class OverlayViewTest {
                 val c = center(view, button)
                 assertTrue("$label üst sınır", c.second - button.height / 2f >= 0)
                 assertTrue("$label alt sınır", c.second + button.height / 2f <= view.height)
-                assertTrue("$label dokunma alanı", button.height >= 20 * density)
+                assertTrue("$label dokunma alanı: scale=$scale density=$density " +
+                    "scaledDensity=${view.resources.displayMetrics.scaledDensity} " +
+                    "screen=${view.resources.displayMetrics.heightPixels} card=${view.height} " +
+                    "button=${button.height} children=" +
+                    (0 until view.childCount).joinToString { "${view.getChildAt(it).height}" },
+                    button.height >= 20 * density)
             }
         }
     }
